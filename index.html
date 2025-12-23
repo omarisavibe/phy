@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lorentz Force Art Generator | PHYS 1021</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #121212; /* Dark mode for "Art" feel */
+            color: #eee;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Controls Panel */
+        #controls {
+            width: 300px;
+            background: #1e1e1e;
+            padding: 20px;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            overflow-y: auto;
+            z-index: 10;
+        }
+
+        h1 { font-size: 1.2rem; color: #4db6ac; margin-bottom: 0.5rem; }
+        p { font-size: 0.85rem; color: #aaa; margin-top: 0; }
+        
+        .control-group {
+            background: #2a2a2a;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        
+        label { display: block; font-size: 0.85rem; margin-bottom: 5px; color: #ccc; }
+        
+        input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+        }
+
+        /* Button Styling */
+        button {
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        #btn-reset { background: #d32f2f; color: white; }
+        #btn-reset:hover { background: #b71c1c; }
+        #btn-pause { background: #fbc02d; color: black; }
+        
+        /* The Simulation Canvas */
+        #canvas-container {
+            flex-grow: 1;
+            position: relative;
+            background: radial-gradient(circle, #1a1a1a 0%, #000000 100%);
+            cursor: crosshair;
+        }
+        
+        canvas { display: block; }
+
+        /* Overlay text on canvas */
+        #overlay {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-align: right;
+            pointer-events: none;
+        }
+        .hud-text {
+            color: rgba(255, 255, 255, 0.5);
+            font-family: monospace;
+        }
+
+        /* Vector Legend */
+        .legend {
+            font-size: 0.8rem;
+            margin-top: 5px;
+            display: flex;
+            gap: 10px;
+        }
+        .legend span { display: flex; align-items: center; gap: 4px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <div>
+            <h1>Lorentz Art Gen</h1>
+            <p>Interactive Chapter 11 Simulator</p>
+        </div>
+
+        <div class="control-group">
+            <label>Magnetic Field (B-Field) [Into/Out]</label>
+            <input type="range" id="slider-B" min="-20" max="20" step="1" value="5">
+            <div id="val-B" style="text-align: right; font-size: 0.8rem; color:#4fc3f7;">5.0 T</div>
+        </div>
+
+        <div class="control-group">
+            <label>Electric Field (E-Field) [Vertical]</label>
+            <input type="range" id="slider-E" min="-10" max="10" step="0.5" value="0">
+            <div id="val-E" style="text-align: right; font-size: 0.8rem; color:#e57373;">0.0 N/C</div>
+        </div>
+
+        <div class="control-group">
+            <label>Particle Charge (q)</label>
+            <input type="range" id="slider-q" min="-5" max="5" step="1" value="2">
+            <div id="val-q" style="text-align: right; font-size: 0.8rem; color:#fff;">+2 C</div>
+        </div>
+
+        <div class="control-group">
+            <label>Initial Velocity (v_x)</label>
+            <input type="range" id="slider-v" min="0" max="30" step="1" value="10">
+        </div>
+
+        <div class="control-group">
+            <label>Trace Length (Art Factor)</label>
+            <input type="range" id="slider-trail" min="0.8" max="0.99" step="0.01" value="0.96">
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+            <button id="btn-pause" style="flex:1;">Pause/Play</button>
+            <button id="btn-reset" style="flex:1;">Reset Particle</button>
+        </div>
+
+        <div class="control-group">
+            <p><strong>Presets:</strong></p>
+            <button onclick="setPreset('cyclotron')" style="width:100%; margin-bottom:5px; background:#444; color:white;">Cyclotron (Spiral)</button>
+            <button onclick="setPreset('selector')" style="width:100%; margin-bottom:5px; background:#444; color:white;">Velocity Selector (Straight)</button>
+            <button onclick="setPreset('flower')" style="width:100%; background:#444; color:white;">E/B Flower (Art)</button>
+        </div>
+        
+        <p style="font-size: 0.75rem; color: #666;">
+            Tip: Click anywhere on the canvas to teleport the particle.
+        </p>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="simCanvas"></canvas>
+        <div id="overlay">
+            <div class="hud-text">F_net = q(E + v × B)</div>
+            <div class="legend">
+                <span><span class="dot" style="background:#4fc3f7;"></span>Force</span>
+                <span><span class="dot" style="background:#e57373;"></span>Velocity</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- SETUP CANVAS ---
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        let width, height;
+
+        function resize() {
+            width = canvas.width = document.getElementById('canvas-container').clientWidth;
+            height = canvas.height = document.getElementById('canvas-container').clientHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- PHYSICS STATE ---
+        const state = {
+            x: width / 2,
+            y: height / 2,
+            vx: 10,
+            vy: 0,
+            mass: 10,   // arbitrary units
+            q: 2,       // Charge
+            B: 5,       // Magnetic field (Z-axis)
+            E: 0,       // Electric field (Y-axis)
+            traceFade: 0.96,
+            paused: false
+        };
+
+        // UI Elements
+        const ui = {
+            B: document.getElementById('slider-B'),
+            E: document.getElementById('slider-E'),
+            q: document.getElementById('slider-q'),
+            v: document.getElementById('slider-v'),
+            trail: document.getElementById('slider-trail'),
+            valB: document.getElementById('val-B'),
+            valE: document.getElementById('val-E'),
+            valQ: document.getElementById('val-q')
+        };
+
+        // --- UPDATE FROM SLIDERS ---
+        function updateParams() {
+            state.B = parseFloat(ui.B.value);
+            state.E = parseFloat(ui.E.value) * 5; // Scale up E for visibility
+            state.q = parseFloat(ui.q.value);
+            state.traceFade = parseFloat(ui.trail.value);
+
+            // Update text displays
+            ui.valB.textContent = state.B.toFixed(1) + " T " + (state.B < 0 ? "(Out)" : "(In)");
+            ui.valE.textContent = (state.E/5).toFixed(1) + " N/C";
+            ui.valQ.textContent = (state.q > 0 ? "+" : "") + state.q + " C";
+        }
+
+        [ui.B, ui.E, ui.q, ui.trail].forEach(el => el.addEventListener('input', updateParams));
+        
+        // Velocity slider only affects reset
+        ui.v.addEventListener('input', () => {
+             // Optional: live update vx? No, physics breaks. Just allow reset.
+        });
+
+        // --- PRESETS ---
+        window.setPreset = (type) => {
+            resetSim();
+            if (type === 'cyclotron') {
+                ui.B.value = 8; ui.E.value = 0; ui.q.value = 2; ui.v.value = 15;
+            } else if (type === 'selector') {
+                // v = E/B -> For straight line. Let's set v=10, B=5, so E must be 50 (scaled)
+                ui.B.value = 5; ui.E.value = 10; ui.q.value = 2; ui.v.value = 10;
+            } else if (type === 'flower') {
+                ui.B.value = 12; ui.E.value = 0.5; ui.q.value = 3; ui.v.value = 20;
+            }
+            updateParams();
+            // Manually set velocity for presets
+            state.vx = parseFloat(ui.v.value);
+        };
+
+        // --- CONTROLS ---
+        document.getElementById('btn-reset').addEventListener('click', resetSim);
+        document.getElementById('btn-pause').addEventListener('click', () => {
+            state.paused = !state.paused;
+        });
+        
+        // Mouse Teleport
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            state.x = e.clientX - rect.left;
+            state.y = e.clientY - rect.top;
+            state.vx = parseFloat(ui.v.value);
+            state.vy = 0;
+            // Clear trail on teleport for clean look
+            ctx.fillStyle = "#000"; 
+            ctx.fillRect(0,0,width,height);
+        });
+
+        function resetSim() {
+            state.x = width / 2; // Start left-center
+            state.y = height / 2;
+            state.vx = parseFloat(ui.v.value);
+            state.vy = 0;
+            ctx.fillStyle = "#000"; // Hard clear
+            ctx.fillRect(0, 0, width, height);
+            updateParams();
+        }
+
+        // --- PHYSICS ENGINE ---
+        function updatePhysics() {
+            if (state.paused) return;
+
+            const dt = 0.15; // Time step
+
+            // Lorentz Force Calculation: F = q(E + v x B)
+            // 2D case: B is in Z, E is in Y (or X/Y). Here E is Y-aligned.
+            // v x B (where B is Z) -> (vy*Bz, -vx*Bz, 0)
+            // Cross product direction depends on sign of B and q.
+            
+            // Fx = q * (vy * B) 
+            // Fy = q * (E - vx * B)
+            
+            // Note: Canvas Y is positive DOWN. 
+            // Physics standard: Y is positive UP.
+            // We'll stick to canvas coords, but keep cross product logic consistent.
+            
+            const Fx = state.q * (state.vy * state.B * 0.1); 
+            const Fy = state.q * (state.E - state.vx * state.B * 0.1); 
+
+            // Acceleration
+            const ax = Fx / state.mass;
+            const ay = Fy / state.mass;
+
+            // Velocity Update (Euler)
+            state.vx += ax * dt;
+            state.vy += ay * dt;
+
+            // Position Update
+            state.x += state.vx * dt;
+            state.y += state.vy * dt;
+
+            // Wall Bouncing (optional, keeps it on screen for art)
+            if (state.x < 0 || state.x > width) state.vx *= -1;
+            if (state.y < 0 || state.y > height) state.vy *= -1;
+        }
+
+        // --- RENDERING ---
+        function draw() {
+            // 1. Fade effect (Instead of clearing, we draw a semi-transparent black rect)
+            // This creates the "Trails" (Digital Art aspect)
+            ctx.fillStyle = `rgba(0, 0, 0, ${1 - state.traceFade})`;
+            ctx.fillRect(0, 0, width, height);
+
+            // 2. Draw Background Grid (B-field visualizer)
+            drawGrid();
+
+            // 3. Draw Particle
+            const color = state.q > 0 ? '#ffeb3b' : '#03a9f4'; // Yellow pos, Blue neg
+            const glow = state.q > 0 ? 'rgba(255, 235, 59, 0.5)' : 'rgba(3, 169, 244, 0.5)';
+            
+            ctx.beginPath();
+            ctx.arc(state.x, state.y, 6, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = glow;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // 4. Draw Velocity Vector (Red)
+            drawVector(state.x, state.y, state.vx * 3, state.vy * 3, "#e57373");
+
+            // 5. Draw Force Vector (Blue)
+            // Recalculate force for vis
+            const Fx = state.q * (state.vy * state.B * 0.1); 
+            const Fy = state.q * (state.E - state.vx * state.B * 0.1); 
+            drawVector(state.x, state.y, Fx * 2, Fy * 2, "#4fc3f7");
+        }
+
+        function drawVector(x, y, dx, dy, color) {
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + dx, y + dy);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        function drawGrid() {
+            // Visualize B-field as X's or Dots
+            if (Math.abs(state.B) < 0.5) return;
+            
+            ctx.fillStyle = "rgba(50, 50, 50, 0.3)";
+            ctx.font = "10px Arial";
+            const symbol = state.B > 0 ? "×" : "•"; 
+            
+            // Draw sparse grid
+            for (let i = 20; i < width; i += 50) {
+                for (let j = 20; j < height; j += 50) {
+                    ctx.fillText(symbol, i, j);
+                }
+            }
+        }
+
+        // --- ANIMATION LOOP ---
+        function loop() {
+            updatePhysics();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        // Start
+        resetSim();
+        loop();
+
+    </script>
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lorentz Force Art Generator | PHYS 1021</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #121212; /* Dark mode for "Art" feel */
+            color: #eee;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Controls Panel */
+        #controls {
+            width: 300px;
+            background: #1e1e1e;
+            padding: 20px;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            overflow-y: auto;
+            z-index: 10;
+        }
+
+        h1 { font-size: 1.2rem; color: #4db6ac; margin-bottom: 0.5rem; }
+        p { font-size: 0.85rem; color: #aaa; margin-top: 0; }
+        
+        .control-group {
+            background: #2a2a2a;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        
+        label { display: block; font-size: 0.85rem; margin-bottom: 5px; color: #ccc; }
+        
+        input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+        }
+
+        /* Button Styling */
+        button {
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        #btn-reset { background: #d32f2f; color: white; }
+        #btn-reset:hover { background: #b71c1c; }
+        #btn-pause { background: #fbc02d; color: black; }
+        
+        /* The Simulation Canvas */
+        #canvas-container {
+            flex-grow: 1;
+            position: relative;
+            background: radial-gradient(circle, #1a1a1a 0%, #000000 100%);
+            cursor: crosshair;
+        }
+        
+        canvas { display: block; }
+
+        /* Overlay text on canvas */
+        #overlay {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-align: right;
+            pointer-events: none;
+        }
+        .hud-text {
+            color: rgba(255, 255, 255, 0.5);
+            font-family: monospace;
+        }
+
+        /* Vector Legend */
+        .legend {
+            font-size: 0.8rem;
+            margin-top: 5px;
+            display: flex;
+            gap: 10px;
+        }
+        .legend span { display: flex; align-items: center; gap: 4px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <div>
+            <h1>Lorentz Art Gen</h1>
+            <p>Interactive Chapter 11 Simulator</p>
+        </div>
+
+        <div class="control-group">
+            <label>Magnetic Field (B-Field) [Into/Out]</label>
+            <input type="range" id="slider-B" min="-20" max="20" step="1" value="5">
+            <div id="val-B" style="text-align: right; font-size: 0.8rem; color:#4fc3f7;">5.0 T</div>
+        </div>
+
+        <div class="control-group">
+            <label>Electric Field (E-Field) [Vertical]</label>
+            <input type="range" id="slider-E" min="-10" max="10" step="0.5" value="0">
+            <div id="val-E" style="text-align: right; font-size: 0.8rem; color:#e57373;">0.0 N/C</div>
+        </div>
+
+        <div class="control-group">
+            <label>Particle Charge (q)</label>
+            <input type="range" id="slider-q" min="-5" max="5" step="1" value="2">
+            <div id="val-q" style="text-align: right; font-size: 0.8rem; color:#fff;">+2 C</div>
+        </div>
+
+        <div class="control-group">
+            <label>Initial Velocity (v_x)</label>
+            <input type="range" id="slider-v" min="0" max="30" step="1" value="10">
+        </div>
+
+        <div class="control-group">
+            <label>Trace Length (Art Factor)</label>
+            <input type="range" id="slider-trail" min="0.8" max="0.99" step="0.01" value="0.96">
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+            <button id="btn-pause" style="flex:1;">Pause/Play</button>
+            <button id="btn-reset" style="flex:1;">Reset Particle</button>
+        </div>
+
+        <div class="control-group">
+            <p><strong>Presets:</strong></p>
+            <button onclick="setPreset('cyclotron')" style="width:100%; margin-bottom:5px; background:#444; color:white;">Cyclotron (Spiral)</button>
+            <button onclick="setPreset('selector')" style="width:100%; margin-bottom:5px; background:#444; color:white;">Velocity Selector (Straight)</button>
+            <button onclick="setPreset('flower')" style="width:100%; background:#444; color:white;">E/B Flower (Art)</button>
+        </div>
+        
+        <p style="font-size: 0.75rem; color: #666;">
+            Tip: Click anywhere on the canvas to teleport the particle.
+        </p>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="simCanvas"></canvas>
+        <div id="overlay">
+            <div class="hud-text">F_net = q(E + v × B)</div>
+            <div class="legend">
+                <span><span class="dot" style="background:#4fc3f7;"></span>Force</span>
+                <span><span class="dot" style="background:#e57373;"></span>Velocity</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- SETUP CANVAS ---
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        let width, height;
+
+        function resize() {
+            width = canvas.width = document.getElementById('canvas-container').clientWidth;
+            height = canvas.height = document.getElementById('canvas-container').clientHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- PHYSICS STATE ---
+        const state = {
+            x: width / 2,
+            y: height / 2,
+            vx: 10,
+            vy: 0,
+            mass: 10,   // arbitrary units
+            q: 2,       // Charge
+            B: 5,       // Magnetic field (Z-axis)
+            E: 0,       // Electric field (Y-axis)
+            traceFade: 0.96,
+            paused: false
+        };
+
+        // UI Elements
+        const ui = {
+            B: document.getElementById('slider-B'),
+            E: document.getElementById('slider-E'),
+            q: document.getElementById('slider-q'),
+            v: document.getElementById('slider-v'),
+            trail: document.getElementById('slider-trail'),
+            valB: document.getElementById('val-B'),
+            valE: document.getElementById('val-E'),
+            valQ: document.getElementById('val-q')
+        };
+
+        // --- UPDATE FROM SLIDERS ---
+        function updateParams() {
+            state.B = parseFloat(ui.B.value);
+            state.E = parseFloat(ui.E.value) * 5; // Scale up E for visibility
+            state.q = parseFloat(ui.q.value);
+            state.traceFade = parseFloat(ui.trail.value);
+
+            // Update text displays
+            ui.valB.textContent = state.B.toFixed(1) + " T " + (state.B < 0 ? "(Out)" : "(In)");
+            ui.valE.textContent = (state.E/5).toFixed(1) + " N/C";
+            ui.valQ.textContent = (state.q > 0 ? "+" : "") + state.q + " C";
+        }
+
+        [ui.B, ui.E, ui.q, ui.trail].forEach(el => el.addEventListener('input', updateParams));
+        
+        // Velocity slider only affects reset
+        ui.v.addEventListener('input', () => {
+             // Optional: live update vx? No, physics breaks. Just allow reset.
+        });
+
+        // --- PRESETS ---
+        window.setPreset = (type) => {
+            resetSim();
+            if (type === 'cyclotron') {
+                ui.B.value = 8; ui.E.value = 0; ui.q.value = 2; ui.v.value = 15;
+            } else if (type === 'selector') {
+                // v = E/B -> For straight line. Let's set v=10, B=5, so E must be 50 (scaled)
+                ui.B.value = 5; ui.E.value = 10; ui.q.value = 2; ui.v.value = 10;
+            } else if (type === 'flower') {
+                ui.B.value = 12; ui.E.value = 0.5; ui.q.value = 3; ui.v.value = 20;
+            }
+            updateParams();
+            // Manually set velocity for presets
+            state.vx = parseFloat(ui.v.value);
+        };
+
+        // --- CONTROLS ---
+        document.getElementById('btn-reset').addEventListener('click', resetSim);
+        document.getElementById('btn-pause').addEventListener('click', () => {
+            state.paused = !state.paused;
+        });
+        
+        // Mouse Teleport
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            state.x = e.clientX - rect.left;
+            state.y = e.clientY - rect.top;
+            state.vx = parseFloat(ui.v.value);
+            state.vy = 0;
+            // Clear trail on teleport for clean look
+            ctx.fillStyle = "#000"; 
+            ctx.fillRect(0,0,width,height);
+        });
+
+        function resetSim() {
+            state.x = width / 2; // Start left-center
+            state.y = height / 2;
+            state.vx = parseFloat(ui.v.value);
+            state.vy = 0;
+            ctx.fillStyle = "#000"; // Hard clear
+            ctx.fillRect(0, 0, width, height);
+            updateParams();
+        }
+
+        // --- PHYSICS ENGINE ---
+        function updatePhysics() {
+            if (state.paused) return;
+
+            const dt = 0.15; // Time step
+
+            // Lorentz Force Calculation: F = q(E + v x B)
+            // 2D case: B is in Z, E is in Y (or X/Y). Here E is Y-aligned.
+            // v x B (where B is Z) -> (vy*Bz, -vx*Bz, 0)
+            // Cross product direction depends on sign of B and q.
+            
+            // Fx = q * (vy * B) 
+            // Fy = q * (E - vx * B)
+            
+            // Note: Canvas Y is positive DOWN. 
+            // Physics standard: Y is positive UP.
+            // We'll stick to canvas coords, but keep cross product logic consistent.
+            
+            const Fx = state.q * (state.vy * state.B * 0.1); 
+            const Fy = state.q * (state.E - state.vx * state.B * 0.1); 
+
+            // Acceleration
+            const ax = Fx / state.mass;
+            const ay = Fy / state.mass;
+
+            // Velocity Update (Euler)
+            state.vx += ax * dt;
+            state.vy += ay * dt;
+
+            // Position Update
+            state.x += state.vx * dt;
+            state.y += state.vy * dt;
+
+            // Wall Bouncing (optional, keeps it on screen for art)
+            if (state.x < 0 || state.x > width) state.vx *= -1;
+            if (state.y < 0 || state.y > height) state.vy *= -1;
+        }
+
+        // --- RENDERING ---
+        function draw() {
+            // 1. Fade effect (Instead of clearing, we draw a semi-transparent black rect)
+            // This creates the "Trails" (Digital Art aspect)
+            ctx.fillStyle = `rgba(0, 0, 0, ${1 - state.traceFade})`;
+            ctx.fillRect(0, 0, width, height);
+
+            // 2. Draw Background Grid (B-field visualizer)
+            drawGrid();
+
+            // 3. Draw Particle
+            const color = state.q > 0 ? '#ffeb3b' : '#03a9f4'; // Yellow pos, Blue neg
+            const glow = state.q > 0 ? 'rgba(255, 235, 59, 0.5)' : 'rgba(3, 169, 244, 0.5)';
+            
+            ctx.beginPath();
+            ctx.arc(state.x, state.y, 6, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = glow;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // 4. Draw Velocity Vector (Red)
+            drawVector(state.x, state.y, state.vx * 3, state.vy * 3, "#e57373");
+
+            // 5. Draw Force Vector (Blue)
+            // Recalculate force for vis
+            const Fx = state.q * (state.vy * state.B * 0.1); 
+            const Fy = state.q * (state.E - state.vx * state.B * 0.1); 
+            drawVector(state.x, state.y, Fx * 2, Fy * 2, "#4fc3f7");
+        }
+
+        function drawVector(x, y, dx, dy, color) {
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + dx, y + dy);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        function drawGrid() {
+            // Visualize B-field as X's or Dots
+            if (Math.abs(state.B) < 0.5) return;
+            
+            ctx.fillStyle = "rgba(50, 50, 50, 0.3)";
+            ctx.font = "10px Arial";
+            const symbol = state.B > 0 ? "×" : "•"; 
+            
+            // Draw sparse grid
+            for (let i = 20; i < width; i += 50) {
+                for (let j = 20; j < height; j += 50) {
+                    ctx.fillText(symbol, i, j);
+                }
+            }
+        }
+
+        // --- ANIMATION LOOP ---
+        function loop() {
+            updatePhysics();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        // Start
+        resetSim();
+        loop();
+
+    </script>
+</body>
+</html>
